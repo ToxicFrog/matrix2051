@@ -1232,14 +1232,11 @@ defmodule M51.MatrixClient.Poller do
 
   defp compute_topic(sup_pid, room_id) do
     state = M51.IrcConn.Supervisor.matrix_state(sup_pid)
-    name = M51.MatrixClient.State.room_name(state, room_id)
     topicwhotime = M51.MatrixClient.State.room_topic(state, room_id)
 
-    case {name, topicwhotime} do
-      {nil, nil} -> nil
-      {name, nil} -> {"[" <> name <> "]", nil}
-      {nil, {topic, who, time}} -> {"[] " <> topic, {who, time}}
-      {name, {topic, who, time}} -> {"[" <> name <> "] " <> topic, {who, time}}
+    case topicwhotime do
+      nil -> nil
+      {topic, who, time} -> {topic, {who, time}}
     end
   end
 
