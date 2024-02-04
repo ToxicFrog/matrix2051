@@ -971,25 +971,15 @@ defmodule M51.MatrixClient.Poller do
       when is_binary(new_room_name) do
     state = M51.IrcConn.Supervisor.matrix_state(sup_pid)
     send = make_send_function(sup_pid, event, write)
+    Logger.debug("m.room.name(#{room_id}) = #{new_room_name}")
 
     channel = M51.MatrixClient.State.room_irc_channel(state, room_id)
     M51.MatrixClient.State.set_room_name(state, room_id, new_room_name)
 
-    if !is_backlog do
-      topic =
-        case compute_topic(sup_pid, room_id) do
-          nil -> ""
-          {topic, _whotime} -> topic
-        end
-
-      send.(%M51.Irc.Command{
-        source: nick2nuh(sender),
-        command: "TOPIC",
-        params: [channel, topic]
-      })
+    case is_backlog do
+      false -> rename_if_changed(sup_pid, room_id, sender, write, event, channel)
+      true -> {room_id, {sender, channel}}
     end
-
-    nil
   end
 
   def handle_event(
