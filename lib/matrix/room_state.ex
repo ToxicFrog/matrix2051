@@ -24,7 +24,7 @@ defmodule M51.Matrix.RoomState do
     :canonical_alias,
     # human-readable non-unique name for the room
     :name,
-    # as on IRC
+    # Tuple of { topic, setter, timestamp }
     :topic,
     # %{user_id => M51.Matrix.RoomMember{...}}
     members: Map.new(),

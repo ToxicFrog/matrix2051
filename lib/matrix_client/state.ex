@@ -152,6 +152,25 @@ defmodule M51.MatrixClient.State do
     end)
   end
 
+  @doc """
+    Returns a stream of Matrix room info tuples suitable for use with IRC LIST,
+    in the format { IRC channel name, user count, topic }
+  """
+  def list_rooms(pid) do
+    Agent.get(pid, fn state -> Map.to_list(state.rooms) end)
+    |> Stream.map(fn kv -> _room_to_322(kv) end)
+  end
+
+  defp _room_to_322({room_id, room}) do
+    { _room_irc_channel(room_id, room),
+      "#{Kernel.map_size(room.members)}",
+      case room.topic do
+        { topic, _, _ } -> topic
+        _ -> ""
+      end
+    }
+  end
+
   def set_room_name(pid, room_id, name) do
     update_room(pid, room_id, fn room -> %{room | name: name} end)
   end
@@ -172,7 +191,13 @@ defmodule M51.MatrixClient.State do
     Returns the IRC channel name for the room
   """
   def room_irc_channel(pid, room_id) do
-    case room_canonical_alias(pid, room_id) do
+    Agent.get(pid, fn state ->
+      _room_irc_channel(room_id, Map.get(state.rooms, room_id, @emptyroom))
+    end)
+  end
+
+  defp _room_irc_channel(room_id, room) do
+    case room.canonical_alias do
       nil -> room_id
       canonical_alias -> canonical_alias
     end

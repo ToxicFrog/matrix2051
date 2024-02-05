@@ -847,6 +847,12 @@ defmodule M51.IrcConn.Handler do
           params: ["VERIFY", "ALREADY_AUTHENTICATED", nick, "You are already authenticated."]
         })
 
+      {"LIST", _} ->
+        M51.MatrixClient.State.list_rooms(matrix_state)
+        |> Stream.map(fn room -> make_numeric.("322", Tuple.to_list(room)) end)
+        |> Stream.concat([make_numeric.("323", ["End of /LIST"])])
+        |> send_batch.("labeled-response")
+
       {"JOIN", [channel | _]} ->
         if String.contains?(channel, ",") do
           # ERR_BADCHANMASK
