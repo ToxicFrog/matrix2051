@@ -853,7 +853,7 @@ defmodule M51.IrcConn.Handler do
         |> Stream.concat([make_numeric.("323", ["End of /LIST"])])
         |> send_batch.("labeled-response")
 
-      {"JOIN", [channel | _]} ->
+      {"MJOIN", [channel | _]} ->
         if String.contains?(channel, ",") do
           # ERR_BADCHANMASK
           send_numeric.(
@@ -882,7 +882,7 @@ defmodule M51.IrcConn.Handler do
           end
         end
 
-      {"JOIN", _} ->
+      {"MJOIN", _} ->
         send_needmoreparams.()
 
       {"PRIVMSG", [channel, text | _]} ->
