@@ -1030,13 +1030,21 @@ defmodule M51.MatrixClient.Poller do
     nil
   end
 
+  # Remember room types, for rooms that specify them; in particular this lets us
+  # filter out Spaces.
+  def handle_event(sup_pid, room_id, _sender, _is_backlog, _write,
+      %{"type" => "m.room.create", "content" => content}) do
+    state = M51.IrcConn.Supervisor.matrix_state(sup_pid)
+    M51.MatrixClient.State.set_room_type(state, room_id, content["type"])
+    nil
+  end
+
   def handle_event(_sup_pid, _room_id, _sender, _is_backlog, _write, %{"type" => event_type})
       when event_type in [
              "im.vector.modular.widgets",
              "org.matrix.appservice-irc.connection",
              "m.room.avatar",
              "m.room.bot.options",
-             "m.room.create",
              "m.room.encryption",
              "m.room.guest_access",
              "m.room.history_visibility",
@@ -1173,10 +1181,11 @@ defmodule M51.MatrixClient.Poller do
     capabilities = M51.IrcConn.State.capabilities(irc_state)
     send = make_send_function(sup_pid, event, write)
 
+    is_space = M51.MatrixClient.State.room_type(state, room_id) == "m.space"
     supports_channel_rename = Enum.member?(capabilities, :channel_rename)
 
     announced_new_channel =
-      if old_canonical_alias == nil || !supports_channel_rename do
+      if (old_canonical_alias == nil || !supports_channel_rename) && !is_space do
         announce_new_channel(
           M51.IrcConn.Supervisor,
           sup_pid,
@@ -1190,7 +1199,7 @@ defmodule M51.MatrixClient.Poller do
         false
       end
 
-    if old_canonical_alias != nil do
+    if old_canonical_alias != nil && !is_space do
       if supports_channel_rename do
         new_canonical_alias = M51.MatrixClient.State.room_irc_channel(state, room_id)
 

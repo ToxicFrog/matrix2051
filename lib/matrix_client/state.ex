@@ -158,6 +158,7 @@ defmodule M51.MatrixClient.State do
   """
   def list_rooms(pid) do
     Agent.get(pid, fn state -> Map.to_list(state.rooms) end)
+    |> Stream.filter(fn {_k, room} -> room.type != "m.space" end)
     |> Stream.map(fn kv -> _room_to_322(kv) end)
   end
 
@@ -185,6 +186,14 @@ defmodule M51.MatrixClient.State do
 
   def room_topic(pid, room_id) do
     Agent.get(pid, fn state -> Map.get(state.rooms, room_id, @emptyroom).topic end)
+  end
+
+  def set_room_type(pid, room_id, type) do
+    update_room(pid, room_id, fn room -> %{room | type: type} end)
+  end
+
+  def room_type(pid, room_id) do
+    Agent.get(pid, fn state -> Map.get(state.rooms, room_id, @emptyroom).type end)
   end
 
   @doc """

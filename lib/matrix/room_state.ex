@@ -26,9 +26,11 @@ defmodule M51.Matrix.RoomState do
     :name,
     # Tuple of { topic, setter, timestamp }
     :topic,
+    # what type of room it is, if specified server-side
+    :type,
     # %{user_id => M51.Matrix.RoomMember{...}}
     members: Map.new(),
     # whether the whole state was fetched
-    synced: false
+    synced: false,
   ]
 end
