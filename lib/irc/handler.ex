@@ -607,7 +607,7 @@ defmodule M51.IrcConn.Handler do
       "CLIENTTAGDENY=*,-draft/react,-draft/reply",
       "CHANLIMIT=",
       "CHANMODES=b,,,i",
-      "CHANTYPES=#!",
+      "CHANTYPES=#!&@",
       "CHATHISTORY=100",
       # Matrix limit is 64k for the whole event, so this is fairly conservative.
       "LINELEN=#{@multiline_max_bytes}",
@@ -1063,7 +1063,7 @@ defmodule M51.IrcConn.Handler do
         send_numeric.("315", [target, "End of WHO list"])
 
       {"WHO", [target | _]} ->
-        if Enum.member?(["#", "!"], String.slice(target, 0, 1)) do
+        if Enum.member?(["#", "!", "&", "@"], String.slice(target, 0, 1)) do
           channel = target
 
           M51.MatrixClient.State.queue_on_channel_sync(
@@ -1216,6 +1216,14 @@ defmodule M51.IrcConn.Handler do
             send_numeric.("324", [target, "+nt"])
 
           <<?!, _::binary>> ->
+            # RPL_CHANNELMODEIS
+            send_numeric.("324", [target, "+nt"])
+
+          <<?&, _::binary>> ->
+            # RPL_CHANNELMODEIS
+            send_numeric.("324", [target, "+nt"])
+
+          <<?@, _::binary>> ->
             # RPL_CHANNELMODEIS
             send_numeric.("324", [target, "+nt"])
 
