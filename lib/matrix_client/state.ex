@@ -19,6 +19,8 @@ defmodule M51.MatrixClient.State do
     Stores the state of a Matrix client (access token, joined rooms, ...)
   """
 
+  require Logger
+
   defstruct [
     :rooms,
     # current value of the 'since' parameter to /_matrix/client/r0/sync
@@ -172,7 +174,7 @@ defmodule M51.MatrixClient.State do
   end
 
   defp _room_to_322({room_id, room}) do
-    { _room_irc_channel(room_id, room),
+    { _irc_channel_from_room(room_id, room),
       "#{Kernel.map_size(room.members)}",
       case room.topic do
         { topic, _, _ } -> topic
@@ -209,15 +211,80 @@ defmodule M51.MatrixClient.State do
     Returns the IRC channel name for the room
   """
   def room_irc_channel(pid, room_id) do
-    Agent.get(pid, fn state ->
-      _room_irc_channel(room_id, Map.get(state.rooms, room_id, @emptyroom))
-    end)
+    Agent.get(pid, fn state -> _irc_channel_from_room(room_id, Map.get(state.rooms, room_id, @emptyroom)) end)
   end
 
-  defp _room_irc_channel(room_id, room) do
-    case room.canonical_alias do
-      nil -> room_id
+  # Try to come up with a sensible IRC channel name for the room.
+  # If it has a canonical alias, we always use that.
+  # If it doesn't, but it does have bridge info, we use that, constructing
+  # a localpart from the bridge-side name, local display name, or room_id, in
+  # that order.
+  # If none of these are available we just use the room_id.
+  # We also make sure it has a suitable channel prefix.
+  defp _irc_channel_from_room(room_id, room) do
+    canonical_alias = room.canonical_alias
+    bridge_info = room.bridge_info
+    cond do
       canonical_alias -> canonical_alias
+      bridge_info -> _irc_channel_from_bridge(room_id, room.name, bridge_info)
+      true -> room_id
+    end
+  end
+
+  # Produce a human-readable name for a bridged channel.
+  # Uses the bridge info to generate the remotepart; tries to generate the
+  # localpart from the bridge info, but if it can't falls back to local display
+  # name, then mxid localpart.
+  defp _irc_channel_from_bridge(room_id, room_name, bridge_info) do
+    _localpart_from_bridge(room_id, room_name, bridge_info.channel.name)
+      <> ":"
+      <> _remotepart_from_bridge(bridge_info)
+  end
+
+  defp _localpart_from_bridge(room_id, room_name, bridged_name) do
+    cond do
+      bridged_name -> _room_name_to_irc(bridged_name)
+      room_name -> _room_name_to_irc(room_name)
+      true -> String.replace(room_id, ~r/:.*$/, "")
+    end
+  end
+
+  # Turn a name from a bridge into something IRC can compass.
+  # At present this means replacing some reserved characters, and then slapping
+  # a chanprefix on the start if it doesn't have one.
+  # TODO: the chanprefix logic will need to be changed when we implement DMs.
+  defp _room_name_to_irc(name) do
+    name = String.replace(name, ~r/[@ :]/, "-")
+    cond do
+      String.match?(name, ~r/^[#!&@]/) -> name
+      true -> "@" <> name
+    end
+  end
+
+  defp _remotepart_from_bridge(info) do
+    # TODO: this should be provided in a config file, or via a command from the
+    # client.
+    protocols = %{
+      "discordgo" => "discord",
+      "googlechat" => "gchat",
+    }
+    networks = %{
+      # Add network mappings here for bridged networks. This should be mapping
+      # of network ID to IRC-friendly human-readable name. We'll fall back to
+      # the network display name if needed but the name is often quite long
+      # and doesn't squish down comfortably.
+      # TODO: in addition to the above, this should be scoped per protocol.
+    }
+    network = case Map.get(networks, info.network.id, info.network.name) do
+      nil -> nil
+      network -> String.replace(network, ~r/[^a-zA-Z0-9_-]+/, "-")
+    end
+    protocol = String.replace(
+      Map.get(protocols, info.protocol.id, info.protocol.name),
+      ~r/[^a-zA-Z0-9_-]+/, "-")
+    case network do
+      nil -> "#{protocol}"
+      _ -> "#{network}.#{protocol}"
     end
   end
 
@@ -234,7 +301,9 @@ defmodule M51.MatrixClient.State do
     state.rooms
     |> Map.to_list()
     |> Enum.find_value(fn {room_id, room} ->
-      if room.canonical_alias == channel || room_id == channel do
+      # The canonical alias (if set) and mxid can always be used to refer to a room,
+      # even if that's not how it appears on IRC.
+      if room.canonical_alias == channel || room_id == channel || _irc_channel_from_room(room_id, room) == channel do
         {room_id, room}
       else
         nil
