@@ -1107,11 +1107,9 @@ defmodule M51.MatrixClient.Poller do
     new_channel_name = M51.MatrixClient.State.room_irc_channel(matrix_state, room_id)
     Logger.debug("rename-channel: #{old_channel_name} -> #{new_channel_name}")
 
-    if old_channel_name != new_channel_name do
-      # Make sure the channel exists first -- this is a no-op if it does exist.
-      Channels.create(irc_state, old_channel_name, room_id)
-      Channels.rename(irc_state, old_channel_name, new_channel_name, write, sup_pid)
-    end
+    # Make sure the channel exists first -- this is a no-op if it does exist.
+    Channels.create(irc_state, old_channel_name, room_id)
+    Channels.rename(irc_state, old_channel_name, new_channel_name, write, sup_pid)
 
     # When processing the backlog, this will be collected by handle_events and
     # used to announce the room instead.
