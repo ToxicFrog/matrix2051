@@ -18,7 +18,7 @@ defmodule M51.IrcConn.State do
   @moduledoc """
     Stores the state of an open IRC connection.
   """
-  defstruct [:sup_pid, :registered, :nick, :gecos, :capabilities, :batches]
+  defstruct [:sup_pid, :registered, :nick, :gecos, :capabilities, :batches, :channels]
 
   use Agent
 
@@ -34,7 +34,9 @@ defmodule M51.IrcConn.State do
           gecos: nil,
           capabilities: [],
           # %{id => {type, args, reversed_messages}}
-          batches: Map.new()
+          batches: Map.new(),
+          # %{room_id => {joined: bool, synced: bool, queue: [pending messages]}}
+          channels: Map.new(),
         }
       end,
       name: {:via, Registry, {M51.Registry, {sup_pid, :irc_state}}}

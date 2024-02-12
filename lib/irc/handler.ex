@@ -22,6 +22,7 @@ defmodule M51.IrcConn.Handler do
   use Task, restart: :permanent
 
   require Logger
+  alias M51.IrcConn.Channels
 
   def start_link(args) do
     Task.start_link(__MODULE__, :run, [args])
@@ -749,6 +750,22 @@ defmodule M51.IrcConn.Handler do
     })
   end
 
+  # TODO: we have an infelicity here where LIST lists channels based on the matrix
+  # client's awareness of server-side channels, but JOIN can fail if the channel
+  # hasn't been propagated to the IRC side. Ideally we want to either (a) make
+  # sure *all* channels are created IRC-side, or (b) lazily create IRC channels
+  # if the user tries to join a channel that exists in Matrix but hasn't been
+  # copied over.
+  defp join_channel(sup_pid, name, send) do
+    state = M51.IrcConn.Supervisor.state(sup_pid)
+    Channels.join(state, name, send, sup_pid)
+  end
+
+  defp part_channel(sup_pid, name, send) do
+    state = M51.IrcConn.Supervisor.state(sup_pid)
+    Channels.part(state, name, "PART from client", send)
+  end
+
   # Called by handle/3 when the command isn't part of a batch
   defp handle_unbatched(sup_pid, command) do
     state = M51.IrcConn.Supervisor.state(sup_pid)
@@ -852,6 +869,36 @@ defmodule M51.IrcConn.Handler do
         |> Stream.map(fn room -> make_numeric.("322", Tuple.to_list(room)) end)
         |> Stream.concat([make_numeric.("323", ["End of /LIST"])])
         |> send_batch.("labeled-response")
+
+      {"JOIN", [channel | _]} ->
+        if String.contains?(channel, ",") do
+          String.split(channel, ",", trim: true)
+          |> Stream.map(fn channel -> join_channel(sup_pid, channel, send) end)
+          |> Stream.run()
+        else
+          join_channel(sup_pid, channel, send)
+        end
+
+      {"JOIN", [channel]} ->
+        join_channel(sup_pid, channel, send)
+
+      {"JOIN", _} ->
+        send_needmoreparams.()
+
+      {"PART", [channel | _]} ->
+        if String.contains?(channel, ",") do
+          String.split(channel, ",", trim: true)
+          |> Stream.map(fn channel -> part_channel(sup_pid, channel, send) end)
+          |> Stream.run()
+        else
+          part_channel(sup_pid, channel, send)
+        end
+
+      {"PART", [channel]} ->
+        part_channel(sup_pid, channel, send)
+
+      {"PART", _} ->
+        send_needmoreparams.()
 
       {"MJOIN", [channel | _]} ->
         if String.contains?(channel, ",") do

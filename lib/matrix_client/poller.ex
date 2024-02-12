@@ -21,6 +21,8 @@ defmodule M51.MatrixClient.Poller do
   use Task, restart: :permanent
 
   require Logger
+  alias M51.IrcConn.Channels
+  alias M51.MatrixClient.State, as: MatrixState
 
   # Poller reconnection logic:
   #  - Initial (re-)connection is always made immediately.
@@ -1171,7 +1173,7 @@ defmodule M51.MatrixClient.Poller do
   defp send_channel_welcome(
          sup_pid,
          room_id,
-         canonical_alias_sender,
+         _canonical_alias_sender,
          old_canonical_alias,
          write,
          event
@@ -1182,17 +1184,10 @@ defmodule M51.MatrixClient.Poller do
     send = make_send_function(sup_pid, event, write)
 
     is_space = M51.MatrixClient.State.room_type(state, room_id) == "m.space"
-    supports_channel_rename = Enum.member?(capabilities, :channel_rename)
 
     announced_new_channel =
-      if (old_canonical_alias == nil || !supports_channel_rename) && !is_space do
-        announce_new_channel(
-          M51.IrcConn.Supervisor,
-          sup_pid,
-          room_id,
-          write,
-          event
-        )
+      if old_canonical_alias == nil && !is_space do
+        Channels.create(irc_state, MatrixState.room_irc_channel(state, room_id), room_id)
 
         true
       else
@@ -1200,163 +1195,22 @@ defmodule M51.MatrixClient.Poller do
       end
 
     if old_canonical_alias != nil && !is_space do
-      if supports_channel_rename do
-        new_canonical_alias = M51.MatrixClient.State.room_irc_channel(state, room_id)
-
-        source =
-          case canonical_alias_sender do
-            nil -> "server."
-            _ -> nick2nuh(canonical_alias_sender)
-          end
-
-        send.(%M51.Irc.Command{
-          source: source,
-          command: "RENAME",
-          params: [old_canonical_alias, new_canonical_alias, "Canonical alias changed"]
-        })
-
-        true
-      else
-        close_renamed_channel(
-          sup_pid,
-          room_id,
-          write,
-          canonical_alias_sender,
-          old_canonical_alias
-        )
-
-        announced_new_channel
-      end
+      Channels.rename(irc_state, old_canonical_alias, MatrixState.room_irc_channel(state, room_id), send, sup_pid)
     end
-  end
-
-  defp announce_new_channel(
-         M51.IrcConn.Supervisor,
-         sup_pid,
-         room_id,
-         write,
-         event
-       ) do
-    irc_state = M51.IrcConn.Supervisor.state(sup_pid)
-    state = M51.IrcConn.Supervisor.matrix_state(sup_pid)
-    nick = M51.IrcConn.State.nick(irc_state)
-    channel = M51.MatrixClient.State.room_irc_channel(state, room_id)
-    capabilities = M51.IrcConn.State.capabilities(irc_state)
-    send_join = make_send_function(sup_pid, event, write)
-    send_nonjoin = make_send_function(sup_pid, nil, write)
-
-    make_numeric = fn numeric, params ->
-      %M51.Irc.Command{source: "server.", command: numeric, params: [nick | params]}
-    end
-
-    send_numeric = fn numeric, params ->
-      send_nonjoin.(make_numeric.(numeric, params))
-    end
-
-    # Join the new channel
-    M51.MatrixClient.State.room_member_add(
-      state,
-      room_id,
-      nick,
-      %M51.Matrix.RoomMember{display_name: nil}
-    )
-
-    send_join.(%M51.Irc.Command{
-      tags: %{"account" => nick},
-      source: nick2nuh(nick),
-      command: "JOIN",
-      params: [channel, nick, nick]
-    })
-
-    case compute_topic(sup_pid, room_id) do
-      nil ->
-        # RPL_NOTOPIC
-        send_numeric.("331", [channel, "No topic is set"])
-
-      {topic, whotime} ->
-        # RPL_TOPIC
-        send_numeric.("332", [channel, topic])
-
-        case whotime do
-          nil ->
-            nil
-
-          {who, time} ->
-            # RPL_TOPICWHOTIME
-            send_numeric.("333", [channel, who, Integer.to_string(div(time, 1000))])
-        end
-    end
-
-    if !Enum.member?(capabilities, :no_implicit_names) do
-      # send RPL_NAMREPLY
-      overhead =
-        make_numeric.("353", ["=", channel, ""]) |> M51.Irc.Command.format() |> byte_size()
-
-      # note for later: if we ever implement prefixes, make sure to add them
-      # *after* calling nick2nuh; we don't want to have prefixes in the username part.
-      M51.MatrixClient.State.room_members(state, room_id)
-      |> Enum.map(fn {user_id, _member} ->
-        nuh = nick2nuh(user_id)
-        # M51.Irc.Command does not escape " " in trailing
-        String.replace(nuh, " ", "\\s") <> " "
-      end)
-      |> Enum.sort()
-      |> M51.Irc.WordWrap.join_tokens(512 - overhead)
-      |> Enum.map(fn line ->
-        line = line |> String.trim_trailing()
-
-        if line != "" do
-          # RPL_NAMREPLY
-          send_numeric.("353", ["=", channel, line])
-        end
-      end)
-      |> Enum.filter(fn line -> line != nil end)
-
-      # RPL_ENDOFNAMES
-      send_numeric.("366", [channel, "End of /NAMES list"])
-    end
-  end
-
-  defp close_renamed_channel(
-         sup_pid,
-         room_id,
-         write,
-         canonical_alias_sender,
-         old_canonical_alias
-       ) do
-    irc_state = M51.IrcConn.Supervisor.state(sup_pid)
-    state = M51.IrcConn.Supervisor.matrix_state(sup_pid)
-    nick = M51.IrcConn.State.nick(irc_state)
-    new_canonical_alias = M51.MatrixClient.State.room_irc_channel(state, room_id)
-    send = make_send_function(sup_pid, nil, write)
-
-    # this is a known room that got renamed; part the old channel.
-    send.(%M51.Irc.Command{
-      tags: %{"account" => nick},
-      source: nick2nuh(nick),
-      command: "PART",
-      params: [
-        old_canonical_alias,
-        canonical_alias_sender <> " renamed this room to " <> new_canonical_alias
-      ]
-    })
-
-    # Announce the rename in the new room
-    send.(%M51.Irc.Command{
-      source: "server.",
-      command: "NOTICE",
-      params: [
-        new_canonical_alias,
-        canonical_alias_sender <> " renamed this room from " <> old_canonical_alias
-      ]
-    })
   end
 
   # Returns a function that can be used to send messages
-  defp make_send_function(_sup_pid, event, write) do
+  defp make_send_function(sup_pid, event, write) do
     fn cmd ->
-      write.(tag_command(cmd, event))
+      irc_state = M51.IrcConn.Supervisor.state(sup_pid)
+      target = List.first(cmd.params)
+      cmd = tag_command(cmd, event)
 
+      cond do
+        is_nil(target) -> write.(cmd)
+        # send_to will put it on the wire immediately if the channel doesn't exist
+        true -> Channels.send_to(irc_state, target, cmd, write)
+      end
       nil
     end
   end
