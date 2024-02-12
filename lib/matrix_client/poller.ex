@@ -1281,7 +1281,7 @@ defmodule M51.MatrixClient.Poller do
       cond do
         is_nil(target) -> write.(cmd)
         # send_to will put it on the wire immediately if the channel doesn't exist
-        true -> Channels.send_to(irc_state, target, cmd, write)
+        true -> Channels.send_to(irc_state, target, cmd, write, sup_pid)
       end
       nil
     end

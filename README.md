@@ -18,6 +18,7 @@ its *general* usability.
 - /list is implemented and lists all channels the matrix server has synced
 - `m.bridge` events are supported for bridged rooms, and the IRC channel name will be based on the bridge information when no matrix canonical alias is set for it
 - bridged DMs will show up as channels with a `@` prefix
+- bridged DMs will be autojoined when you first receive a message on them
 
 ## Planned Changes
 

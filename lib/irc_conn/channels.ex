@@ -280,30 +280,39 @@ defmodule M51.IrcConn.Channels do
     update_in(state.channels, fn channels -> channels |> Map.delete(old_name) |> Map.put(new_name, channel) end)
   end
 
-  def send_to(pid, name, message, write) do
-    _update_channel(pid, name, fn chan -> _send_to(chan, message, write) end)
+  def send_to(pid, name, message, write, sup_pid) do
+    Agent.update(pid, fn state ->
+      _send_to(state, name, message, write, sup_pid)
+    end)
   end
 
-  def _send_to(channel, message, write) do
+  def _send_to(irc_state, name, message, write, sup_pid) do
+    channel = irc_state.channels[name]
     cond do
       # If we don't know about a channel of that name, we assume it's non-channel
       # traffic intended for the client and pass it through.
       is_nil(channel) ->
         write.(message)
-        channel
+        irc_state
 
       # Also passthrough if the channel is already joined.
       channel.joined ->
         write.(message)
-        channel
+        irc_state
+
+      # If it's a DM channel, join it immediately and then passthrough.
+      !channel.joined && String.first(name) == "@" ->
+        _announce(sup_pid, irc_state, name, write)
+        write.(message)
+        update_in(irc_state.channels[name], fn channel -> %{channel | joined: true} end)
 
       # If the channel is not joined but the message is enqueueable, we store it
       # to replay for the user when (or if) they join the channel
       _should_queue?(message) ->
-        update_in(channel.queue, fn queue -> [message | queue] |> Enum.take(256) end)
+        update_in(irc_state.channels[name].queue, fn queue -> [message | queue] |> Enum.take(256) end)
 
       # Otherwise we just drop the message on the floor.
-      true -> channel
+      true -> irc_state
     end
   end
 
