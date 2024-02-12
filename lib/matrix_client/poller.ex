@@ -191,6 +191,9 @@ defmodule M51.MatrixClient.Poller do
     end
   end
 
+  # TODO: now that we have the IRC-side channel list, we can probably skip the whole
+  # "collect room info here and then process it once caught up" step and just
+  # dispatch room info directly to the IRC channel manager as we get it.
   def handle_joined_room(sup_pid, is_backlog, handled_event_ids, room_id, write, room_event) do
     state = M51.IrcConn.Supervisor.matrix_state(sup_pid)
     irc_state = M51.IrcConn.Supervisor.state(sup_pid)
@@ -1041,6 +1044,90 @@ defmodule M51.MatrixClient.Poller do
     nil
   end
 
+  # Does not appear in the Matrix spec, but is mentioned in their official blog
+  # posts, and shows up in traffic from Conduit.
+  # For bridged rooms, contains information about the other end of the bridge,
+  # most notably use-names and stable IDs for the remote channel, network, and
+  # protocol.
+  def handle_event(
+        sup_pid,
+        room_id,
+        sender,
+        _is_backlog,
+        write,
+        %{"type" => "m.bridge", "content" => %{
+          "channel" => %{ "displayname" => channel_name, "id" => channel_id },
+          "network" => %{ "displayname" => network_name, "id" => network_id },
+          "protocol" => %{ "displayname" => protocol_name, "id" => protocol_id }
+        }} = event
+      ) do
+    state = M51.IrcConn.Supervisor.matrix_state(sup_pid)
+    old_channel_name = M51.MatrixClient.State.room_irc_channel(state, room_id)
+
+    M51.MatrixClient.State.set_room_bridge_info(state, room_id,
+          %{
+            channel: %{ name: channel_name, id: channel_id },
+            network: %{ name: network_name, id: network_id },
+            protocol: %{ name: protocol_name, id: protocol_id }
+          })
+
+    rename_if_changed(sup_pid, room_id, sender, write, event, old_channel_name)
+    {room_id, {sender, old_channel_name}}
+  end
+
+  # Some bridges don't have a concept of "network" on the other side of the bridge.
+  def handle_event(
+        sup_pid,
+        room_id,
+        sender,
+        _is_backlog,
+        write,
+        %{"type" => "m.bridge", "content" => %{
+          "channel" => %{ "displayname" => channel_name, "id" => channel_id },
+          "protocol" => %{ "displayname" => protocol_name, "id" => protocol_id }
+        }} = event
+      ) do
+    state = M51.IrcConn.Supervisor.matrix_state(sup_pid)
+    old_channel_name = M51.MatrixClient.State.room_irc_channel(state, room_id)
+
+    M51.MatrixClient.State.set_room_bridge_info(state, room_id,
+          %{
+            channel: %{ name: channel_name, id: channel_id },
+            network: %{ name: nil, id: nil },
+            protocol: %{ name: protocol_name, id: protocol_id }
+          })
+
+    rename_if_changed(sup_pid, room_id, sender, write, event, old_channel_name)
+    {room_id, {sender, old_channel_name}}
+  end
+
+  # If the channel's IRC-facing name has changed, tell the IRC side of things to
+  # rename it, which will also rename it in the client if needed by sending
+  # PART/JOIN or (where supported) RENAME commands.
+  defp rename_if_changed(
+        sup_pid,
+        room_id,
+        sender,
+        write,
+        _event,
+        old_channel_name
+      ) do
+    irc_state = M51.IrcConn.Supervisor.state(sup_pid)
+    matrix_state = M51.IrcConn.Supervisor.matrix_state(sup_pid)
+    new_channel_name = M51.MatrixClient.State.room_irc_channel(matrix_state, room_id)
+    Logger.debug("rename-channel: #{old_channel_name} -> #{new_channel_name}")
+
+    if old_channel_name != new_channel_name do
+      # Make sure the channel exists first -- this is a no-op if it does exist.
+      Channels.create(irc_state, old_channel_name, room_id)
+      Channels.rename(irc_state, old_channel_name, new_channel_name, write, sup_pid)
+    end
+
+    # When processing the backlog, this will be collected by handle_events and
+    # used to announce the room instead.
+    {room_id, {sender, old_channel_name}}
+  end
+
   def handle_event(_sup_pid, _room_id, _sender, _is_backlog, _write, %{"type" => event_type})
       when event_type in [
              "im.vector.modular.widgets",
@@ -1195,7 +1282,7 @@ defmodule M51.MatrixClient.Poller do
       end
 
     if old_canonical_alias != nil && !is_space do
-      Channels.rename(irc_state, old_canonical_alias, MatrixState.room_irc_channel(state, room_id), send, sup_pid)
+      rename_if_changed(sup_pid, room_id, "server.", write, event, old_canonical_alias)
     end
   end
 

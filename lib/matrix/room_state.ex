@@ -28,6 +28,10 @@ defmodule M51.Matrix.RoomState do
     :topic,
     # what type of room it is, if specified server-side
     :type,
+    # If the room is bridged, information about the other end of the bridge
+    # This may be used to construct a canonical_alias in the absence of a
+    # matrix-side alias. If nil, no bridge info is available.
+    :bridge_info,
     # %{user_id => M51.Matrix.RoomMember{...}}
     members: Map.new(),
     # whether the whole state was fetched

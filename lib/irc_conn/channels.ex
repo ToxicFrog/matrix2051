@@ -65,9 +65,18 @@ defmodule M51.IrcConn.Channels do
     Agent.get(pid, fn state -> state.channels[name] != nil end)
   end
 
+  # Create a new channel. No-op if you ask it to recreate a channel that already
+  # exists with the same room_id.
   def create(pid, name, room_id) do
     Logger.debug("create: #{name}")
-    _update_channel(pid, name, fn _ -> %M51.IrcConn.Channels{room_id: room_id} end)
+    _update_channel(pid, name, fn chan ->
+      cond do
+        is_nil(chan) -> %M51.IrcConn.Channels{room_id: room_id}
+        chan.room_id == room_id -> chan
+        # TODO: this is a name collision! We should panic!
+        true -> %M51.IrcConn.Channels{room_id: room_id}
+      end
+    end)
   end
 
   def delete(pid, name, send) do
@@ -197,9 +206,7 @@ defmodule M51.IrcConn.Channels do
   end
 
   def part(pid, channel, reason, send) do
-    Agent.update(pid, fn state ->
-
-      _part(state, channel, reason, send) end)
+    Agent.update(pid, fn state -> _part(state, channel, reason, send) end)
   end
 
   defp _part(
@@ -234,7 +241,6 @@ defmodule M51.IrcConn.Channels do
     end
   end
 
-  # TODO: if channel was joined, deannounce/announce or rename it
   def rename(pid, old_name, new_name, send, sup_pid) do
     Logger.debug("rename: #{new_name} <- #{old_name}")
     Agent.update(pid, fn state -> _rename(state, old_name, new_name, send, sup_pid) end)
@@ -248,6 +254,9 @@ defmodule M51.IrcConn.Channels do
     cond do
       # If the channel isn't joined, we don't need to inform the client.
       !channel.joined -> nil
+
+      # If the channel wasn't actually renamed we don't need to do anything either.
+      old_name == new_name -> nil
 
       # If the client supports RENAME we just send one of those.
       supports_channel_rename ->

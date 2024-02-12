@@ -81,6 +81,15 @@ defmodule M51.MatrixClient.State do
     end)
   end
 
+  # Given info about a bridge endpoint, set the room's user-facing name, bridge
+  # info, and bridge-derived alias from it.
+  def set_room_bridge_info(pid, room_id, info) do
+    update_room(pid, room_id, fn room ->
+      Logger.debug("set_room_brige_info " <> Kernel.inspect(room) <> " <- " <> Kernel.inspect(info))
+      %{room | bridge_info: info}
+    end)
+  end
+
   def room_canonical_alias(pid, room_id) do
     Agent.get(pid, fn state -> Map.get(state.rooms, room_id, @emptyroom).canonical_alias end)
   end
